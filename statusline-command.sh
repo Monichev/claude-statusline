@@ -108,6 +108,7 @@ if [ -f "$CACHE_FILE" ]; then
     five_h_util=$(jq -r '.five_hour.utilization // empty' "$CACHE_FILE" 2>/dev/null)
     five_h_reset=$(jq -r '.five_hour.resets_at // empty' "$CACHE_FILE" 2>/dev/null)
     seven_d_util=$(jq -r '.seven_day.utilization // empty' "$CACHE_FILE" 2>/dev/null)
+    seven_d_reset=$(jq -r '.seven_day.resets_at // empty' "$CACHE_FILE" 2>/dev/null)
 
     if [ -n "$five_h_util" ] && [ "$five_h_util" != "null" ]; then
         five_h_int=$(printf "%.0f" "$five_h_util")
@@ -139,13 +140,37 @@ if [ -f "$CACHE_FILE" ]; then
         fi
 
         seven_d_int=""
+        seven_d_reset_str=""
         if [ -n "$seven_d_util" ] && [ "$seven_d_util" != "null" ]; then
             seven_d_int=$(printf "%.0f" "$seven_d_util")
         fi
 
+        if [ -n "$seven_d_reset" ] && [ "$seven_d_reset" != "null" ]; then
+            stripped7d=$(echo "$seven_d_reset" | sed 's/\.[0-9]*[+-].*//;s/[+-][0-9][0-9]:[0-9][0-9]$//')
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                reset7d_epoch=$(TZ=UTC date -jf "%Y-%m-%dT%H:%M:%S" "$stripped7d" +%s 2>/dev/null)
+            else
+                reset7d_epoch=$(date -ud "$seven_d_reset" +%s 2>/dev/null)
+            fi
+
+            if [ -n "$reset7d_epoch" ]; then
+                now7d_epoch=$(date +%s)
+                diff7d_s=$((reset7d_epoch - now7d_epoch))
+                if [ "$diff7d_s" -gt 0 ]; then
+                    diff7d_d=$((diff7d_s / 86400))
+                    diff7d_h=$(( (diff7d_s % 86400) / 3600 ))
+                    if [ "$diff7d_d" -gt 0 ]; then
+                        seven_d_reset_str=" reset ${diff7d_d}d${diff7d_h}h"
+                    else
+                        seven_d_reset_str=" reset ${diff7d_h}h"
+                    fi
+                fi
+            fi
+        fi
+
         limits_part="5h: ${five_h_int}%${reset_str}"
         if [ -n "$seven_d_int" ]; then
-            limits_part="${limits_part} | 7d: ${seven_d_int}%"
+            limits_part="${limits_part} | 7d: ${seven_d_int}%${seven_d_reset_str}"
         fi
     fi
 fi
