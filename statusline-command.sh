@@ -37,11 +37,16 @@ used_pct_fmt=$(printf "%.1f" "$used_pct")
 
 # --- Git info ---
 git_part=""
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+# Find .git dir for lock check (works inside worktrees too)
+_git_dir=$(GIT_OPTIONAL_LOCKS=0 git rev-parse --git-dir 2>/dev/null)
+if [ -n "$_git_dir" ] && [ ! -f "$_git_dir/index.lock" ] && GIT_OPTIONAL_LOCKS=0 git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # GIT_OPTIONAL_LOCKS=0 prevents git from taking the index lock for
+    # optional operations (stat-cache refresh). This avoids contention
+    # with Claude Code's own git commands running in parallel.
+    branch=$(GIT_OPTIONAL_LOCKS=0 git rev-parse --abbrev-ref HEAD 2>/dev/null)
     [ ${#branch} -gt 20 ] && branch="${branch:0:19}…"
 
-    eval $(git status --porcelain 2>/dev/null | awk '{
+    eval $(GIT_OPTIONAL_LOCKS=0 git status --porcelain 2>/dev/null | awk '{
         x=substr($0,1,1); y=substr($0,2,1)
         if (x=="?" && y=="?") { u++; next }
         if (x=="A" || x=="R" || x=="C") { a++; next }
