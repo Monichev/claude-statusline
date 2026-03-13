@@ -3,7 +3,7 @@
 A custom statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that shows model info, context usage, rate limits, and git status at a glance.
 
 ```
-Opus 4.6 | Context: ▓▓▓▓░░░░░░░░░░░░░░░░ 21.0% [42K/200K] | 5h: 4% reset 4h37m | 7d: 3% reset 5d12h @32s ago ░░░░░░░▁▂█ | main +2 ~5 ?3
+Opus 4.6 | Context: ▓▓▓▓░░░░░░░░░░░░░░░░ 21.0% [42K/200K] | 5h: 4% reset 4h37m | 7d: 3% reset 5d12h @13:12:10 ░░░░░░░▁▂█ | main +2 ~5 ?3
 ```
 
 ## What it shows
@@ -13,7 +13,7 @@ Opus 4.6 | Context: ▓▓▓▓░░░░░░░░░░░░░░░░
 | Model | `Opus 4.6` | Current model name |
 | Context | `▓▓▓▓░░░░ 21.0% [42K/200K]` | Context window usage with progress bar |
 | Rate limits | `5h: 4% reset 4h37m \| 7d: 3% reset 5d12h` | 5-hour and 7-day usage with reset countdowns |
-| Data age | `@32s ago` | Time since last rate limit update |
+| Data age | `@13:12:10` | Absolute local time of last rate limit update |
 | Sparkline | `░░░░░░░▁▂█` | Token consumption rate (1%=▁ … 8%+=█, ░=idle) |
 | Git | `main +2 ~5 -1 ?3` | Branch and file changes |
 

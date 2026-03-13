@@ -252,14 +252,11 @@ if [ -f "$CACHE_FILE" ]; then
                 upd_epoch=$(date -ud "$cache_updated" +%s 2>/dev/null)
             fi
             if [ -n "$upd_epoch" ]; then
-                now_epoch=$(date +%s)
-                age_s=$((now_epoch - upd_epoch))
-                if [ "$age_s" -lt 60 ]; then
-                    updated_str=" @${age_s}s ago"
-                elif [ "$age_s" -lt 3600 ]; then
-                    updated_str=" @$((age_s / 60))m ago"
+                # Show absolute local time instead of relative (statusline doesn't refresh frequently)
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    updated_str=" @$(date -r "$upd_epoch" +%H:%M:%S)"
                 else
-                    updated_str=" @$((age_s / 3600))h ago"
+                    updated_str=" @$(date -d "@$upd_epoch" +%H:%M:%S)"
                 fi
             fi
         fi
