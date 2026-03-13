@@ -30,7 +30,7 @@ filled=$(printf "%.0f" $(echo "$used_pct * $bar_length / 100" | bc -l))
 empty=$((bar_length - filled))
 
 bar=""
-for ((i=0; i<filled; i++)); do bar="${bar}█"; done
+for ((i=0; i<filled; i++)); do bar="${bar}▓"; done
 for ((i=0; i<empty; i++)); do bar="${bar}░"; done
 
 used_pct_fmt=$(printf "%.1f" "$used_pct")
@@ -66,6 +66,7 @@ context_part="$model_name | Context: $bar $used_pct_fmt% [$total_tokens_fmt/$con
 # --- Rate limits ---
 CACHE_FILE="/tmp/claude-statusline-usage-cache.json"
 CACHE_MAX_AGE=60
+HISTORY_MAX=11
 
 fetch_usage() {
     local token
@@ -87,7 +88,43 @@ fetch_usage() {
     # Verify it's valid JSON with expected fields
     echo "$response" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
 
-    echo "$response" > "$CACHE_FILE"
+    local now_iso
+    now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local five_h_val seven_d_val
+    five_h_val=$(echo "$response" | jq -r '.five_hour.utilization // 0')
+    seven_d_val=$(echo "$response" | jq -r '.seven_day.utilization // 0')
+
+    local new_entry
+    new_entry=$(jq -n --arg ts "$now_iso" --argjson f "$five_h_val" --argjson s "$seven_d_val" \
+        '{timestamp: $ts, five_hour_util: $f, seven_day_util: $s}')
+
+    # Build cache with history
+    if [ -f "$CACHE_FILE" ]; then
+        local prev_history
+        prev_history=$(jq -r '.history // []' "$CACHE_FILE" 2>/dev/null)
+        [ "$prev_history" = "null" ] && prev_history="[]"
+        jq -n \
+            --arg ts "$now_iso" \
+            --argjson current "$response" \
+            --argjson prev "$prev_history" \
+            --argjson entry "$new_entry" \
+            --argjson max "$HISTORY_MAX" \
+            '{
+                last_updated: $ts,
+                current: $current,
+                history: ([$entry] + $prev | .[:$max])
+            }' > "$CACHE_FILE"
+    else
+        jq -n \
+            --arg ts "$now_iso" \
+            --argjson current "$response" \
+            --argjson entry "$new_entry" \
+            '{
+                last_updated: $ts,
+                current: $current,
+                history: [$entry]
+            }' > "$CACHE_FILE"
+    fi
 }
 
 # Check cache freshness and refresh if needed
@@ -110,10 +147,11 @@ fi
 # Parse cached data
 limits_part=""
 if [ -f "$CACHE_FILE" ]; then
-    five_h_util=$(jq -r '.five_hour.utilization // empty' "$CACHE_FILE" 2>/dev/null)
-    five_h_reset=$(jq -r '.five_hour.resets_at // empty' "$CACHE_FILE" 2>/dev/null)
-    seven_d_util=$(jq -r '.seven_day.utilization // empty' "$CACHE_FILE" 2>/dev/null)
-    seven_d_reset=$(jq -r '.seven_day.resets_at // empty' "$CACHE_FILE" 2>/dev/null)
+    five_h_util=$(jq -r '.current.five_hour.utilization // empty' "$CACHE_FILE" 2>/dev/null)
+    five_h_reset=$(jq -r '.current.five_hour.resets_at // empty' "$CACHE_FILE" 2>/dev/null)
+    seven_d_util=$(jq -r '.current.seven_day.utilization // empty' "$CACHE_FILE" 2>/dev/null)
+    seven_d_reset=$(jq -r '.current.seven_day.resets_at // empty' "$CACHE_FILE" 2>/dev/null)
+    cache_updated=$(jq -r '.last_updated // empty' "$CACHE_FILE" 2>/dev/null)
 
     if [ -n "$five_h_util" ] && [ "$five_h_util" != "null" ]; then
         five_h_int=$(printf "%.0f" "$five_h_util")
@@ -173,10 +211,75 @@ if [ -f "$CACHE_FILE" ]; then
             fi
         fi
 
+        # Build sparkline from history — shows token consumption rate (deltas)
+        sparkline=""
+        history_count=$(jq -r '.history | length' "$CACHE_FILE" 2>/dev/null)
+        if [ -n "$history_count" ] && [ "$history_count" -gt 1 ]; then
+            spark_chars=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+            # Compute deltas between consecutive entries (newest first in history)
+            # Delta = newer.util - older.util (consumption between two snapshots)
+            deltas=$(jq -r '
+                [range(.history | length - 1)] as $indices |
+                [$indices[] as $i |
+                    (.history[$i].five_hour_util - .history[$i+1].five_hour_util)
+                    | if . < 0 then 0 else . end
+                ] | reverse | @tsv' "$CACHE_FILE" 2>/dev/null)
+            # Find max delta for normalization (minimum 1% to avoid flat graph)
+            max_delta=1000  # 1% * 1000
+            for d in $deltas; do
+                d_int=$(printf "%.0f" "$(echo "$d * 1000" | bc -l)" 2>/dev/null)
+                [ -z "$d_int" ] && d_int=0
+                [ "$d_int" -gt "$max_delta" ] && max_delta=$d_int
+            done
+            # Number of deltas = history_count - 1
+            delta_count=$((history_count - 1))
+            pad_count=$((HISTORY_MAX - 1 - delta_count))  # 11-1=10 slots for deltas
+            [ "$pad_count" -lt 0 ] && pad_count=0
+            for ((i=0; i<pad_count; i++)); do sparkline="${sparkline}░"; done
+            for d in $deltas; do
+                d_int=$(printf "%.0f" "$(echo "$d * 1000" | bc -l)" 2>/dev/null)
+                [ -z "$d_int" ] && d_int=0
+                if [ "$d_int" -eq 0 ]; then
+                    sparkline="${sparkline}░"
+                else
+                    idx=$(printf "%.0f" "$(echo "$d * 1000 * 7 / $max_delta" | bc -l)" 2>/dev/null)
+                    [ -z "$idx" ] && idx=1
+                    [ "$idx" -lt 1 ] && idx=1
+                    [ "$idx" -gt 7 ] && idx=7
+                    sparkline="${sparkline}${spark_chars[$idx]}"
+                fi
+            done
+        fi
+
+        # Format last updated timestamp
+        updated_str=""
+        if [ -n "$cache_updated" ] && [ "$cache_updated" != "null" ]; then
+            # Convert UTC timestamp to local time for display
+            stripped_upd=$(echo "$cache_updated" | sed 's/Z$//')
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                upd_epoch=$(TZ=UTC date -jf "%Y-%m-%dT%H:%M:%S" "$stripped_upd" +%s 2>/dev/null)
+            else
+                upd_epoch=$(date -ud "$cache_updated" +%s 2>/dev/null)
+            fi
+            if [ -n "$upd_epoch" ]; then
+                now_epoch=$(date +%s)
+                age_s=$((now_epoch - upd_epoch))
+                if [ "$age_s" -lt 60 ]; then
+                    updated_str=" @${age_s}s ago"
+                elif [ "$age_s" -lt 3600 ]; then
+                    updated_str=" @$((age_s / 60))m ago"
+                else
+                    updated_str=" @$((age_s / 3600))h ago"
+                fi
+            fi
+        fi
+
         limits_part="5h: ${five_h_int}%${reset_str}"
+        [ -n "$sparkline" ] && limits_part="${limits_part} ${sparkline}"
         if [ -n "$seven_d_int" ]; then
             limits_part="${limits_part} | 7d: ${seven_d_int}%${seven_d_reset_str}"
         fi
+        limits_part="${limits_part}${updated_str}"
     fi
 fi
 
