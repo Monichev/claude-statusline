@@ -215,36 +215,26 @@ if [ -f "$CACHE_FILE" ]; then
         sparkline=""
         history_count=$(jq -r '.history | length' "$CACHE_FILE" 2>/dev/null)
         if [ -n "$history_count" ] && [ "$history_count" -gt 1 ]; then
+            # 1%=▁ 2%=▂ 3%=▃ 4%=▄ 5%=▅ 6%=▆ 7%=▇ 8%+=█
             spark_chars=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
             # Compute deltas between consecutive entries (newest first in history)
-            # Delta = newer.util - older.util (consumption between two snapshots)
             deltas=$(jq -r '
                 [range(.history | length - 1)] as $indices |
                 [$indices[] as $i |
                     (.history[$i].five_hour_util - .history[$i+1].five_hour_util)
                     | if . < 0 then 0 else . end
                 ] | reverse | @tsv' "$CACHE_FILE" 2>/dev/null)
-            # Find max delta for normalization (minimum 1% to avoid flat graph)
-            max_delta=1000  # 1% * 1000
-            for d in $deltas; do
-                d_int=$(printf "%.0f" "$(echo "$d * 1000" | bc -l)" 2>/dev/null)
-                [ -z "$d_int" ] && d_int=0
-                [ "$d_int" -gt "$max_delta" ] && max_delta=$d_int
-            done
-            # Number of deltas = history_count - 1
             delta_count=$((history_count - 1))
-            pad_count=$((HISTORY_MAX - 1 - delta_count))  # 11-1=10 slots for deltas
+            pad_count=$((HISTORY_MAX - 1 - delta_count))
             [ "$pad_count" -lt 0 ] && pad_count=0
             for ((i=0; i<pad_count; i++)); do sparkline="${sparkline}░"; done
             for d in $deltas; do
-                d_int=$(printf "%.0f" "$(echo "$d * 1000" | bc -l)" 2>/dev/null)
+                d_int=$(printf "%.0f" "$d" 2>/dev/null)
                 [ -z "$d_int" ] && d_int=0
                 if [ "$d_int" -eq 0 ]; then
                     sparkline="${sparkline}░"
                 else
-                    idx=$(printf "%.0f" "$(echo "$d * 1000 * 7 / $max_delta" | bc -l)" 2>/dev/null)
-                    [ -z "$idx" ] && idx=1
-                    [ "$idx" -lt 1 ] && idx=1
+                    idx=$((d_int - 1))
                     [ "$idx" -gt 7 ] && idx=7
                     sparkline="${sparkline}${spark_chars[$idx]}"
                 fi
@@ -275,11 +265,11 @@ if [ -f "$CACHE_FILE" ]; then
         fi
 
         limits_part="5h: ${five_h_int}%${reset_str}"
-        [ -n "$sparkline" ] && limits_part="${limits_part} ${sparkline}"
         if [ -n "$seven_d_int" ]; then
             limits_part="${limits_part} | 7d: ${seven_d_int}%${seven_d_reset_str}"
         fi
         limits_part="${limits_part}${updated_str}"
+        [ -n "$sparkline" ] && limits_part="${limits_part} ${sparkline}"
     fi
 fi
 
