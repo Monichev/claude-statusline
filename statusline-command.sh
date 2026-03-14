@@ -82,8 +82,12 @@ fetch_usage() {
     fi
     [ -z "$token" ] || [ "$token" = "null" ] && return 1
 
+    local cc_version
+    cc_version=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    [ -z "$cc_version" ] && cc_version="2.1.72"
+
     local response
-    response=$(curl -s --max-time 5 -H "Authorization: Bearer $token" -H "anthropic-beta: oauth-2025-04-20" "https://api.anthropic.com/api/oauth/usage" 2>/dev/null) || return 1
+    response=$(curl -s --max-time 5 -H "Authorization: Bearer $token" -H "anthropic-beta: oauth-2025-04-20" -H "User-Agent: claude-code/${cc_version}" "https://api.anthropic.com/api/oauth/usage" 2>/dev/null) || return 1
 
     # Verify it's valid JSON with expected fields
     echo "$response" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return 1
